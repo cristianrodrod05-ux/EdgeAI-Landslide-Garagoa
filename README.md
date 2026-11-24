@@ -18,6 +18,6 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
 ## Hardware Pinout (ESP32-S3)
 | Component | Protocol / Signal | ESP32 Pin |
 | :--- | :--- | :--- |
-| **MPU6050 (IMU)** | I2C (`SDA` / `SCL`) | `GPIO 21` / `GPIO 22` |
-| **Soil Moisture Sensor** | Analog (12-bit ADC) | `GPIO 34` |
+| **MPU6050 (IMU)** | I2C (`SDA` / `SCL`) | `GPIO 8` / `GPIO 9` |
+| **Soil Moisture Sensor** | Analog (12-bit ADC) | `GPIO 4` |
 | **Local Alarm (LED/Buzzer)** | Digital Output | `GPIO 2` |
