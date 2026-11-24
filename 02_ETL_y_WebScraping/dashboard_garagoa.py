@@ -1,87 +1,107 @@
-# -*- coding: utf-8 -*-
-"""
-Módulo de Supervisión Climática y Tabla Hash O(1) - Proyecto Garagoa
-Extrae el historial horario de los últimos 7 días y el estado vigente desde
-la API de Open-Meteo para contrastar la saturación del suelo en el Valle de Tenza.
-"""
-
-from datetime import datetime
-import pandas as pd
+import os
 import requests
+import pandas as pd
+from datetime import datetime
 
-# Coordenadas de Garagoa, Boyacá (Valle de Tenza)
+# Configurar Pandas para mostrar todas las columnas sin recortar con '...'
+pd.set_option("display.max_columns", None)
+pd.set_option("display.max_rows", 100)
+pd.set_option("display.width", 1000)
+
+# Coordenadas geográficas de Garagoa, Boyacá (Valle de Tenza)
+LATITUD = 5.08
+LONGITUD = -73.36
+NODO_ID = "Garagoa_Nodo_1"
+
 URL_OPEN_METEO = (
-    "https://api.open-meteo.com/v1/forecast?"
-    "latitude=5.08&longitude=-73.36"
-    "&current=temperature_2m,precipitation,relative_humidity_2m"
-    "&hourly=temperature_2m,relative_humidity_2m,precipitation"
-    "&past_days=7&forecast_days=1"
-    "&timezone=America%2FBogota"
+    f"https://api.open-meteo.com/v1/forecast?"
+    f"latitude={LATITUD}&longitude={LONGITUD}"
+    f"&current=temperature_2m,relative_humidity_2m,precipitation"
+    f"&hourly=temperature_2m,relative_humidity_2m,precipitation"
+    f"&past_days=7&forecast_days=1&timezone=America%2FBogota"
 )
 
+def ejecutar_etl_garagoa():
+    print("=" * 78)
+    print("  SISTEMA ETL CONTEXTUAL Y SUPERVISIÓN MACRO-CLIMÁTICA (GARAGOA - BOYACÁ)")
+    print("=" * 78)
+    print(f"Conectando con Open-Meteo (Lat: {LATITUD}, Lon: {LONGITUD})...\n")
 
-def consultar_clima_garagoa(archivo_salida: str = "historico_clima_garagoa.csv"):
-    print("Conectando con Open-Meteo para extraer historial climático de Garagoa (últimos 7 días)...\n")
+    respuesta = requests.get(URL_OPEN_METEO, timeout=15)
+    respuesta.raise_for_status()
+    datos = respuesta.json()
 
-    try:
-        respuesta = requests.get(URL_OPEN_METEO, timeout=10)
-        respuesta.raise_for_status()
-        datos = respuesta.json()
+    # 1. Transformación del historial horario (últimos 7 días)
+    hourly = datos["hourly"]
+    df = pd.DataFrame({
+        "fecha_hora": pd.to_datetime(hourly["time"]),
+        "temperatura_C": hourly["temperature_2m"],
+        "humedad_relativa_%": hourly["relative_humidity_2m"],
+        "lluvia_instantanea_mm": hourly["precipitation"],
+    })
 
-        # 1. Construir serie histórica horaria real (cada 1 hora) hasta el instante actual
-        df_horario = pd.DataFrame({
-            "fecha_hora": datos["hourly"]["time"],
-            "temperatura_C": datos["hourly"]["temperature_2m"],
-            "humedad_relativa_%": datos["hourly"]["relative_humidity_2m"],
-            "lluvia_instantanea_mm": datos["hourly"]["precipitation"],
-        })
+    # Filtrar registros hasta la hora actual
+    ahora = pd.Timestamp.now()
+    df = df[df["fecha_hora"] <= ahora].copy()
+    df["lluvia_acumulada_24h_mm"] = (
+        df["lluvia_instantanea_mm"].rolling(window=24, min_periods=1).sum().round(2)
+    )
+    df["fecha_hora"] = df["fecha_hora"].dt.strftime("%Y-%m-%d %H:%M")
 
-        # Filtrar únicamente horas ya ocurridas (excluir pronóstico futuro del día)
-        hora_actual_api = datos["current"]["time"]
-        df_horario = df_horario[df_horario["fecha_hora"] <= hora_actual_api].copy()
+    # 2. Estructura de Datos O(1): Tabla Hash indexada por ID de estación
+    actual = datos["current"]
+    lluvia_24h_actual = float(df["lluvia_acumulada_24h_mm"].iloc[-1])
 
-        # Calcular lluvia acumulada móvil de las últimas 24 horas para cada registro
-        df_horario["lluvia_acumulada_24h_mm"] = (
-            df_horario["lluvia_instantanea_mm"].rolling(window=24, min_periods=1).sum().round(2)
-        )
-        df_horario["fecha_hora"] = df_horario["fecha_hora"].str.replace("T", " ")
-
-        # 2. ESTRUCTURA DE DATOS: Tabla Hash (dict) para acceso O(1)
-        ultimo_acumulado_24h = float(df_horario["lluvia_acumulada_24h_mm"].iloc[-1])
-        tabla_hash_clima = {
-            "Garagoa_Nodo_1": {
-                "fecha_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "temperatura_C": datos["current"]["temperature_2m"],
-                "humedad_relativa_%": datos["current"]["relative_humidity_2m"],
-                "lluvia_instantanea_mm": datos["current"]["precipitation"],
-                "lluvia_acumulada_24h_mm": ultimo_acumulado_24h,
-            }
+    tabla_hash_clima = {
+        NODO_ID: {
+            "fecha_hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "temperatura_C": actual["temperature_2m"],
+            "humedad_relativa_%": actual["relative_humidity_2m"],
+            "lluvia_instantanea_mm": actual["precipitation"],
+            "lluvia_acumulada_24h_mm": lluvia_24h_actual,
         }
+    }
 
-        # 3. Consulta rápida O(1) y validación cruzada macro-climática
-        registro_actual = tabla_hash_clima["Garagoa_Nodo_1"]
-        print("=== DASHBOARD CONTEXTUAL: PREVENCIÓN DE DESLIZAMIENTOS ===")
-        print("Búsqueda rápida en Tabla Hash O(1) arrojó los siguientes resultados:")
-        print(registro_actual)
+    # Consulta en tiempo constante O(1)
+    telemetria = tabla_hash_clima[NODO_ID]
 
-        if (
-            registro_actual["lluvia_instantanea_mm"] > 0
-            or registro_actual["lluvia_acumulada_24h_mm"] > 0
-            or registro_actual["humedad_relativa_%"] > 85
-        ):
-            print("\n⚠️ ALERTA MACRO-CLIMÁTICA: Precipitación reciente o humedad alta en Garagoa.")
-            print("El suelo puede presentar saturación hídrica y pérdida de fricción en la ladera.")
-        else:
-            print("\n✅ Clima externo seco. Sin precipitaciones registradas en las últimas 24 horas.")
+    print(f"--- CONSULTA EN TABLA HASH O(1) | CLAVE: '{NODO_ID}' ---")
+    print(f"  • Timestamp consulta      : {telemetria['fecha_hora']}")
+    print(f"  • Temperatura ambiente    : {telemetria['temperatura_C']} °C")
+    print(f"  • Humedad relativa aire   : {telemetria['humedad_relativa_%']} %")
+    print(f"  • Lluvia instantánea      : {telemetria['lluvia_instantanea_mm']} mm")
+    print(f"  • Lluvia acumulada (24h)  : {telemetria['lluvia_acumulada_24h_mm']} mm")
 
-        # 4. Exportar dataset extendido a CSV
-        df_horario.to_csv(archivo_salida, index=False)
-        print(f"\n=== DATASET CLIMÁTICO GUARDADO ({len(df_horario)} registros horarios reales) ===")
-        print(df_horario.tail(10))
+    # 3. Diagnóstico contextual de saturación hídrica
+    print("\n--- DIAGNÓSTICO CONTEXTUAL DE RIESGO ---")
+    if telemetria["lluvia_acumulada_24h_mm"] >= 15.0:
+        print("  [CRÍTICO] Lluvia acumulada 24h >= 15 mm: Alta probabilidad de saturación.")
+    elif telemetria["lluvia_acumulada_24h_mm"] > 0.5 or telemetria["humedad_relativa_%"] >= 65:
+        print("  [PREVENTIVO] Precipitación reciente o humedad alta en Garagoa.")
+        print("               Posible pérdida gradual de fricción en la ladera.")
+    else:
+        print("  [ESTABLE] Condiciones atmosféricas secas en las últimas 24 horas.")
 
-    except requests.RequestException as error:
-        print(f"⚠️ Error de conexión con Open-Meteo: {error}")
+    # 4. Guardar CSV en 04_Datasets si existe la carpeta, o en la ruta actual
+    ruta_salida = (
+        os.path.join("04_Datasets", "historico_clima_garagoa.csv")
+        if os.path.isdir("04_Datasets")
+        else "historico_clima_garagoa.csv"
+    )
+    df.to_csv(ruta_salida, index=False)
 
+    # 5. Resumen estadístico y visualización de las últimas 65 líneas
+    print("\n--- RESUMEN VENTANA HISTÓRICA (7 DÍAS) ---")
+    print(f"  • Total registros horarios : {len(df)} filas")
+    print(f"  • Rango de temperatura     : {df['temperatura_C'].min():.1f} °C a {df['temperatura_C'].max():.1f} °C")
+    print(f"  • Máximo acumulado 24h     : {df['lluvia_acumulada_24h_mm'].max():.2f} mm")
+    print(f"  • Archivo exportado        : {ruta_salida}")
+
+    print("\n" + "=" * 78)
+    print("  ÚLTIMAS 65 OBSERVACIONES HORARIAS REGISTRADAS EN GARAGOA")
+    print("=" * 78)
+    print(df.tail(65).to_string(index=False))
+    print("=" * 78)
 
 if __name__ == "__main__":
-    consultar_clima_garagoa()
+    ejecutar_etl_garagoa()
