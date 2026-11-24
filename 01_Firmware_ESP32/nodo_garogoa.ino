@@ -23,7 +23,7 @@ const unsigned long INTERVALO_PRINT_MS = 1200;
 unsigned long ultimoPrintMs = 0;
 unsigned long contadorTarjetas = 0;
 
-// Umbrales: humedad (> 60%) como principal + vibración fuerte (>= 8.0 deg/50ms)
+// Umbrales físicos de respaldo: humedad (> 60%) + vibración fuerte (>= 8.0 deg/50ms)
 const float UMBRAL_HUMEDAD_MIN_PCT = 60.0f;
 const float UMBRAL_VIBRACION_DEG   = 8.0f;
 
@@ -59,6 +59,22 @@ class CircularBuffer {
       for (int i = 0; i < count; i++) suma += buffer[i].humedad_adc;
       float promPctDirecto = ((float)suma / count / 4095.0f) * 100.0f;
       return constrain(100.0f - promPctDirecto, 0.0f, 100.0f);
+    }
+
+    // Filtro de media móvil (ventana W = 5) en tiempo constante O(1)
+    void promedioAceleracionW(int W, float &ax_f, float &ay_f, float &az_f) const {
+      if (count == 0) { ax_f = ay_f = az_f = 0.0f; return; }
+      int n = (count < W) ? count : W;
+      float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+      for (int i = 0; i < n; i++) {
+        int idx = (head - 1 - i + WINDOW_SIZE) % WINDOW_SIZE;
+        sx += buffer[idx].ax;
+        sy += buffer[idx].ay;
+        sz += buffer[idx].az;
+      }
+      ax_f = sx / n;
+      ay_f = sy / n;
+      az_f = sz / n;
     }
 };
 
@@ -142,6 +158,8 @@ void imprimirTarjetaMonitor(
   float vel_inclinacion,
   bool hayVibracion,
   bool alertaHumedad,
+  bool alertaIA,
+  int clase_predicha,
   bool alertaDeslizamiento,
   int8_t ml_raw,
   float ml_prob,
@@ -210,13 +228,16 @@ void imprimirTarjetaMonitor(
 
   // 3. Sección TinyML
   float scorePct = ml_prob * 100.0f;
-  Serial.print("║ 🧠 TINYML (INT8)      : Score ");
+  Serial.print("║ 🧠 TINYML (INT8)      : Riesgo C2 ");
   if (scorePct < 10.0f) Serial.print(" ");
   Serial.print(scorePct, 1);
   Serial.print("% ");
-  imprimirBarra(scorePct, 12);
-  Serial.print(" | raw=");
-  Serial.println(ml_raw);
+  imprimirBarra(scorePct, 10);
+  Serial.print(" | Clase=");
+  Serial.print(clase_predicha);
+  Serial.print(" (raw=");
+  Serial.print(ml_raw);
+  Serial.println(")");
 
   Serial.print("║    └─ Inferencia Edge : ⚡ ");
   Serial.print(ultima_latencia_ms, 3);
@@ -225,10 +246,12 @@ void imprimirTarjetaMonitor(
 
   // 4. Estado General y Actuador
   Serial.print("║ 🛡️  DIAGNÓSTICO       : ");
-  if (alertaHumedad && hayVibracion) {
+  if (alertaIA) {
+    Serial.println("🚨 PELIGRO CRÍTICO (TinyML Clase 2: Deslizamiento)");
+  } else if (alertaHumedad && hayVibracion) {
     Serial.println("🚨 PELIGRO CRÍTICO (Humedad > 60% + Sacudida)");
-  } else if (alertaHumedad) {
-    Serial.println("🚨 ALERTA PRINCIPAL (Saturación Humedad > 60%)");
+  } else if (clase_predicha == 1 || alertaHumedad) {
+    Serial.println("⚠️  ALERTA PREVENTIVA (Saturación hídrica detectada)");
   } else if (hayVibracion) {
     Serial.println("⚠️  ALERTA SÍSMICA/MOV (Vibración >= 8.0°)");
   } else {
@@ -294,7 +317,7 @@ void setup() {
   Serial.print(kTensorArenaSize);
   Serial.println(" bytes reservados               │");
   Serial.println("│  • Frecuencia Muestreo : 20 Hz (cada 50 ms) | FIFO: 50 datos   │");
-  Serial.println("│  • Regla Alerta Buzzer : Humedad > 60%  o  Vibración >= 8.0°   │");
+  Serial.println("│  • Filtro Acelerómetro : Media Móvil W = 5 | Salidas ML: 3     │");
   Serial.println("└────────────────────────────────────────────────────────────────┘");
 }
 
@@ -310,6 +333,8 @@ void loop() {
     Wire.endTransmission(false);
     Wire.requestFrom(MPU_ADDR, 6, true);
 
+    if (Wire.available() < 6) return; // Protección contra lectura I2C incompleta
+
     int16_t raw_ax = Wire.read() << 8 | Wire.read();
     int16_t raw_ay = Wire.read() << 8 | Wire.read();
     int16_t raw_az = Wire.read() << 8 | Wire.read();
@@ -322,14 +347,17 @@ void loop() {
 
     ventanaEdge.push(lectura);
 
-    // 2. Humedad (0% seco, 100% húmedo), inclinación (Pitch) y cambio (dPitch)
+    // 2. Humedad, inclinación suavizada con filtro W=5 (Pitch) y cambio (dPitch)
     float hum_bruto_pct = (lectura.humedad_adc / 4095.0f) * 100.0f;
     float hum_pct = constrain(100.0f - hum_bruto_pct, 0.0f, 100.0f);
     float hum_fifo_pct = ventanaEdge.promedioHumedadPct();
 
+    float ax_f, ay_f, az_f;
+    ventanaEdge.promedioAceleracionW(5, ax_f, ay_f, az_f);
+
     float pitch = atan2(
-      lectura.ax,
-      sqrt(lectura.ay * lectura.ay + lectura.az * lectura.az)
+      ax_f,
+      sqrt(ay_f * ay_f + az_f * az_f)
     ) * 180.0f / PI;
 
     static float pitch_anterior = pitch;
@@ -344,15 +372,24 @@ void loop() {
       input->data.int8[i] = (int8_t)constrain(cuant, -128, 127);
     }
 
-    // 3. Inferencia TinyML + Perfilado de Latencia (N = 100)
+    // 3. Inferencia TinyML + Dequantización de las 3 clases + Latencia (N = 100)
     unsigned long t_inicio = micros();
     interpreter->Invoke();
     unsigned long t_fin = micros();
     float ultima_latencia_ms = (t_fin - t_inicio) / 1000.0f;
 
-    int8_t ml_raw = output->data.int8[0];
-    float ml_prob = (ml_raw - output->params.zero_point) * output->params.scale;
-    ml_prob = constrain(ml_prob, 0.0f, 1.0f);
+    float probs[3];
+    int clase_predicha = 0;
+    for (int c = 0; c < 3; c++) {
+      int8_t raw_c = output->data.int8[c];
+      probs[c] = constrain((raw_c - output->params.zero_point) * output->params.scale, 0.0f, 1.0f);
+      if (probs[c] > probs[clase_predicha]) {
+        clase_predicha = c;
+      }
+    }
+
+    int8_t ml_raw = output->data.int8[clase_predicha];
+    float ml_prob = probs[2]; // Probabilidad de Clase 2 (Deslizamiento inminente)
 
     if (indice_prueba < N_PRUEBAS) {
       tiempos_ms[indice_prueba] = ultima_latencia_ms;
@@ -382,10 +419,11 @@ void loop() {
       }
     }
 
-    // 4. Lógica de alerta: humedad (> 60%) como principal + vibración fuerte (>= 8.0 deg)
+    // 4. Lógica de alerta híbrida: Clasificación TinyML + respaldo físico
     bool alertaHumedad = (hum_pct > UMBRAL_HUMEDAD_MIN_PCT);
     bool hayVibracion = (fabs(vel_inclinacion) >= UMBRAL_VIBRACION_DEG);
-    bool alertaDeslizamiento = (alertaHumedad || hayVibracion);
+    bool alertaIA = (clase_predicha == 2 || probs[2] >= 0.60f);
+    bool alertaDeslizamiento = (alertaIA || (alertaHumedad && hayVibracion));
     activarBuzzer(alertaDeslizamiento);
 
     // 5. Impresión ordenada en Monitor Serial cada 1.2 s
@@ -403,6 +441,8 @@ void loop() {
         vel_inclinacion,
         hayVibracion,
         alertaHumedad,
+        alertaIA,
+        clase_predicha,
         alertaDeslizamiento,
         ml_raw,
         ml_prob,
