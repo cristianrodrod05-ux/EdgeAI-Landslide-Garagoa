@@ -42,7 +42,9 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
 1. **Run Contextual Weather ETL & Hash Table Supervision:**
    ```bash
    pip install requests pandas
-   python 02_ETL_y_WebScraping/dashboard_garagoa.py´´´
-   4. Haz clic en el botón verde **`Commit changes...`** y confirma.
-
-*(Asegúrate de que no quede nada escrito debajo de la palabra `benchmark.` al final del archivo).*
+   python 02_ETL_y_WebScraping/dashboard_garagoa.py
+   ```
+2. **Flash ESP32-S3 Edge Node:**
+   - Install the `TensorFlowLite_ESP32` library and the **ESP32** board package in **Arduino IDE**.
+   - Open `01_Firmware_ESP32/nodo_garagoa.ino` (keeping `model.h` inside the same sketch folder).
+   - Select **ESP32S3 Dev Module** as the target board, connect the MPU6050, soil moisture sensor, and active buzzer according to the **Hardware Pinout** table above, upload the sketch, and open the Serial Monitor at `115200` baud to inspect real-time risk classification and the $N = 100$ latency benchmark.
