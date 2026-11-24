@@ -1,5 +1,5 @@
 // Archivo generado automáticamente para el ESP32 - Proyecto Garagoa
-#ifndef MODEL_h 
+#ifndef MODEL_H 
 #define MODEL_H
  alignas(16) const unsigned char g_model[] = {
   0x20, 0x00, 0x00, 0x00, 0x54, 0x46, 0x4c, 0x33, 0x00, 0x00, 0x00, 0x00,
