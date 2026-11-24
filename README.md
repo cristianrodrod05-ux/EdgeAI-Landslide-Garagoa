@@ -3,8 +3,8 @@
 Autonomous, low-cost embedded system designed to detect and classify imminent rainfall-induced landslides locally on an **ESP32** microcontroller using **TinyML (TensorFlow Lite Micro)**, a custom **ETL** acquisition pipeline, and deterministic **Data Structures**.
 
 ## Team Members (Universidad Santo Tomás - Tunja)
-* **Cristian Andrés Rodríguez R.** — ETL Pipeline, Contextual Web Scraping & TinyML Quantization & Neural Network Architecture 
-* **Diego Alejandro Rivera P.** — Embedded C++ Firmware, I2C Sensors & Circular Buffer &  Mechanical Physics Modeling
+* **Cristian Andrés Rodríguez R.** — ETL Pipeline, Contextual Web Scraping , TinyML Quantization & Neural Network Architecture 
+* **Diego Alejandro Rivera P.** — Embedded C++ Firmware, I2C Sensors , Circular Buffer &  Mechanical Physics Modeling
 * **Fabian Ricardo Fuya C.** — Physical Prototype & Validation Metrics
 * **Juan José Sabogal S.** — IEEE Paper
 
