@@ -23,9 +23,9 @@ const unsigned long INTERVALO_PRINT_MS = 1200;
 unsigned long ultimoPrintMs = 0;
 unsigned long contadorTarjetas = 0;
 
-// Umbrales físicos de respaldo: humedad (> 60%) + vibración fuerte (>= 8.0 deg/50ms)
-const float UMBRAL_HUMEDAD_MIN_PCT = 60.0f;
-const float UMBRAL_VIBRACION_DEG   = 8.0f;
+// Referencia visual en tarjeta (la decisión real de alarma la toma TinyML)
+const float UMBRAL_HUMEDAD_REF_PCT = 60.0f;
+const float UMBRAL_VIBRACION_REF_DEG = 8.0f;
 
 // =========================================================================
 // 1. ESTRUCTURA DE DATOS EN EL EDGE: BUFFER CIRCULAR FIFO O(1)
@@ -148,6 +148,15 @@ void ejecutarEscanerI2C() {
   Serial.println("└────────────────────────────────────────────────────────────────┘");
 }
 
+const char* nombreClase(int clase) {
+  switch (clase) {
+    case 0:  return "0: Estable";
+    case 1:  return "1: Saturacion preventiva";
+    case 2:  return "2: Deslizamiento inminente";
+    default: return "Desconocida";
+  }
+}
+
 void imprimirTarjetaMonitor(
   unsigned long numTarjeta,
   unsigned long tiempoMs,
@@ -157,12 +166,11 @@ void imprimirTarjetaMonitor(
   float pitch,
   float vel_inclinacion,
   bool hayVibracion,
-  bool alertaHumedad,
-  bool alertaIA,
-  int clase_predicha,
-  bool alertaDeslizamiento,
-  int8_t ml_raw,
-  float ml_prob,
+  int clasePredicha,
+  float probEstable,
+  float probSaturacion,
+  float probDeslizamiento,
+  bool alertaActiva,
   float ultima_latencia_ms
 ) {
   float mag_g = sqrt(
@@ -191,8 +199,8 @@ void imprimirTarjetaMonitor(
   Serial.print(hum_pct, 1);
   Serial.print("%  ");
   imprimirBarra(hum_pct, 16);
-  Serial.print(" (Umbral > ");
-  Serial.print(UMBRAL_HUMEDAD_MIN_PCT, 0);
+  Serial.print(" (Ref ");
+  Serial.print(UMBRAL_HUMEDAD_REF_PCT, 0);
   Serial.println("%)");
 
   Serial.print("║    └─ Promedio FIFO   : ");
@@ -226,6 +234,227 @@ void imprimirTarjetaMonitor(
   Serial.println("g)");
   Serial.println("╟────────────────────────────────────────────────────────────────╢");
 
-  // 3. Sección TinyML
-  float scorePct = ml_prob * 100.0f;
-  Serial.print("║ 🧠 TINYML
+  // 3. Sección TinyML (3 clases Softmax)
+  float pDeslizPct = probDeslizamiento * 100.0f;
+  Serial.print("║ 🧠 TINYML (INT8)      : ");
+  Serial.println(nombreClase(clasePredicha));
+
+  Serial.print("║    └─ [0]Est:");
+  Serial.print(probEstable * 100.0f, 1);
+  Serial.print("%  [1]Sat:");
+  Serial.print(probSaturacion * 100.0f, 1);
+  Serial.print("%  [2]Desl:");
+  Serial.print(pDeslizPct, 1);
+  Serial.println("%");
+
+  Serial.print("║    └─ Riesgo Desl.    : ");
+  imprimirBarra(pDeslizPct, 14);
+  Serial.print(" ⚡ ");
+  Serial.print(ultima_latencia_ms, 3);
+  Serial.println(" ms");
+  Serial.println("╠════════════════════════════════════════════════════════════════╣");
+
+  // 4. Estado General y Actuador gobernado por TinyML
+  Serial.print("║ 🛡️  DIAGNÓSTICO IA    : ");
+  if (clasePredicha == 2) {
+    Serial.println("🚨 DESLIZAMIENTO INMINENTE (Clase 2)");
+  } else if (clasePredicha == 1) {
+    Serial.println("⚠️  SATURACIÓN PREVENTIVA (Clase 1)");
+  } else {
+    Serial.println("✅ TERRENO ESTABLE (Clase 0)");
+  }
+
+  Serial.print("║ 🔔 BUZZER (GPIO ");
+  Serial.print(PIN_ALARMA);
+  Serial.print(")    : ");
+  Serial.println(alertaActiva ? "🔊 SONANDO [HIGH]" : "🔇 SILENCIO [LOW]");
+  Serial.println("╚════════════════════════════════════════════════════════════════╝");
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(400);
+  pinMode(PIN_ALARMA, OUTPUT);
+  activarBuzzer(false);
+
+  // Prueba rápida de 300 ms al encender para verificar el buzzer activo
+  activarBuzzer(true);
+  delay(300);
+  activarBuzzer(false);
+
+  Serial.println();
+  Serial.println("╔════════════════════════════════════════════════════════════════╗");
+  Serial.println("║     SISTEMA DE ALERTA TEMPRANA DE DESLIZAMIENTOS (EDGE AI)     ║");
+  Serial.println("║         Proyecto Integrador - Nodo ESP32-S3 (Garagoa)          ║");
+  Serial.println("╚════════════════════════════════════════════════════════════════╝");
+
+  // Iniciar I2C en pines de ESP32-S3 (SDA = 8, SCL = 9) y correr escáner
+  Wire.begin(8, 9);
+  ejecutarEscanerI2C();
+
+  // Despertar MPU6050 en dirección confirmada 0x69
+  Wire.beginTransmission(MPU_ADDR);
+  Wire.write(0x6B); // Registro PWR_MGMT_1
+  Wire.write(0);    // Despertar MPU6050
+  Wire.endTransmission(true);
+
+  // Cargar modelo cuantizado desde model.h
+  tfl_model = tflite::GetModel(g_model);
+  static tflite::MicroMutableOpResolver<3> resolver;
+  resolver.AddFullyConnected();
+  resolver.AddRelu();
+  resolver.AddSoftmax();
+
+  static tflite::MicroInterpreter static_interpreter(
+    tfl_model, resolver, tensor_arena, kTensorArenaSize, &micro_error_reporter
+  );
+  interpreter = &static_interpreter;
+  interpreter->AllocateTensors();
+
+  input = interpreter->input(0);
+  output = interpreter->output(0);
+
+  Serial.println("┌────────────────────────────────────────────────────────────────┐");
+  Serial.println("│ ⚙️  ESPECIFICACIONES Y RECURSOS EN EJECUCIÓN                   │");
+  Serial.println("├────────────────────────────────────────────────────────────────┤");
+  Serial.print("│  • Tensor Arena SRAM : ");
+  Serial.print(interpreter->arena_used_bytes());
+  Serial.print(" / ");
+  Serial.print(kTensorArenaSize);
+  Serial.println(" bytes reservados               │");
+  Serial.println("│  • Frecuencia Muestreo : 20 Hz (cada 50 ms) | FIFO: 50 datos   │");
+  Serial.println("│  • Salida TinyML (3) : [0] Estable | [1] Sat. | [2] Desliz.  │");
+  Serial.println("└────────────────────────────────────────────────────────────────┘");
+}
+
+void loop() {
+  unsigned long tiempoActual = millis();
+
+  if (tiempoActual - tiempoAnterior >= INTERVALO_MS) {
+    tiempoAnterior = tiempoActual;
+
+    // 1. Adquisición física de sensores (MPU6050 en 0x69 + Humedad ADC)
+    Wire.beginTransmission(MPU_ADDR);
+    Wire.write(0x3B); // ACCEL_XOUT_H
+    Wire.endTransmission(false);
+    Wire.requestFrom(MPU_ADDR, 6, true);
+
+    if (Wire.available() < 6) return; // Protección contra lectura I2C incompleta
+
+    int16_t raw_ax = Wire.read() << 8 | Wire.read();
+    int16_t raw_ay = Wire.read() << 8 | Wire.read();
+    int16_t raw_az = Wire.read() << 8 | Wire.read();
+
+    MuestraSensor lectura;
+    lectura.ax = raw_ax / 16384.0f;
+    lectura.ay = raw_ay / 16384.0f;
+    lectura.az = raw_az / 16384.0f;
+    lectura.humedad_adc = analogRead(PIN_HUMEDAD);
+
+    ventanaEdge.push(lectura);
+
+    // 2. Humedad, inclinación suavizada con filtro W=5 (Pitch) y cambio (dPitch)
+    float hum_bruto_pct = (lectura.humedad_adc / 4095.0f) * 100.0f;
+    float hum_pct = constrain(100.0f - hum_bruto_pct, 0.0f, 100.0f);
+    float hum_fifo_pct = ventanaEdge.promedioHumedadPct();
+
+    float ax_f, ay_f, az_f;
+    ventanaEdge.promedioAceleracionW(5, ax_f, ay_f, az_f);
+
+    float pitch = atan2(
+      ax_f,
+      sqrt(ay_f * ay_f + az_f * az_f)
+    ) * 180.0f / PI;
+
+    static float pitch_anterior = pitch;
+    float vel_inclinacion = pitch - pitch_anterior;
+    pitch_anterior = pitch;
+
+    bool hayVibracion = (fabs(vel_inclinacion) >= UMBRAL_VIBRACION_REF_DEG);
+
+    // Normalización Z-Score y cuantización a int8 para entrada del modelo
+    float features[3] = {hum_pct, pitch, vel_inclinacion};
+    for (int i = 0; i < 3; i++) {
+      float norm = (features[i] - X_MEAN[i]) / X_STD[i];
+      int cuant = (int)round(norm / input->params.scale + input->params.zero_point);
+      input->data.int8[i] = (int8_t)constrain(cuant, -128, 127);
+    }
+
+    // 3. Inferencia TinyML (3 clases Softmax) + Perfilado de Latencia (N = 100)
+    unsigned long t_inicio = micros();
+    interpreter->Invoke();
+    unsigned long t_fin = micros();
+    float ultima_latencia_ms = (t_fin - t_inicio) / 1000.0f;
+
+    int numClases = output->dims->data[output->dims->size - 1];
+    float probs[3] = {0.0f, 0.0f, 0.0f};
+    int clasePredicha = 0;
+    float maxProb = -1.0f;
+
+    for (int c = 0; c < 3 && c < numClases; c++) {
+      int8_t raw_c = output->data.int8[c];
+      float p_c = (raw_c - output->params.zero_point) * output->params.scale;
+      probs[c] = constrain(p_c, 0.0f, 1.0f);
+      if (probs[c] > maxProb) {
+        maxProb = probs[c];
+        clasePredicha = c;
+      }
+    }
+
+    if (indice_prueba < N_PRUEBAS) {
+      tiempos_ms[indice_prueba] = ultima_latencia_ms;
+      indice_prueba++;
+
+      if (indice_prueba == N_PRUEBAS) {
+        float suma = 0.0f;
+        for (int i = 0; i < N_PRUEBAS; i++) suma += tiempos_ms[i];
+        float promedio = suma / N_PRUEBAS;
+
+        float suma_var = 0.0f;
+        for (int i = 0; i < N_PRUEBAS; i++) {
+          float diff = tiempos_ms[i] - promedio;
+          suma_var += diff * diff;
+        }
+        float desviacion = sqrt(suma_var / N_PRUEBAS);
+
+        Serial.println();
+        Serial.println("╔════════════════════════════════════════════════════════════════╗");
+        Serial.println("║ 📊 BENCHMARK OFICIAL DE LATENCIA TINYML (N = 100 MUESTRAS)     ║");
+        Serial.print("║    Latencia Promedio : ");
+        Serial.print(promedio, 3);
+        Serial.print(" ± ");
+        Serial.print(desviacion, 3);
+        Serial.println(" ms                         ║");
+        Serial.println("╚════════════════════════════════════════════════════════════════╝");
+      }
+    }
+
+    // 4. Lógica de alerta gobernada por la clasificación TinyML
+    // Clase 2 = Deslizamiento inminente (y opcionalmente Clase 1 con alta confianza >= 0.85)
+    bool alertaActiva = (clasePredicha == 2) || (clasePredicha == 1 && probs[1] >= 0.85f);
+    activarBuzzer(alertaActiva);
+
+    // 5. Impresión ordenada en Monitor Serial cada 1.2 s
+    if (tiempoActual - ultimoPrintMs >= INTERVALO_PRINT_MS) {
+      ultimoPrintMs = tiempoActual;
+      contadorTarjetas++;
+
+      imprimirTarjetaMonitor(
+        contadorTarjetas,
+        tiempoActual,
+        lectura,
+        hum_pct,
+        hum_fifo_pct,
+        pitch,
+        vel_inclinacion,
+        hayVibracion,
+        clasePredicha,
+        probs[0],
+        probs[1],
+        probs[2],
+        alertaActiva,
+        ultima_latencia_ms
+      );
+    }
+  }
+}
