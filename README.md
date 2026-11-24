@@ -42,4 +42,11 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
 1. **Run Contextual Weather ETL & Hash Table Supervision:**
    ```bash
    pip install requests pandas
-   python 02_ETL_y_WebScraping/dashboard_garagoa.py
+   python 02_ETL_y_WebScraping/dashboard_garagoa.py´´´
+   4. **Guarda los cambios:** Haz clic en el botón verde **`Commit changes...`** arriba a la derecha y luego en **`Commit changes`** en la ventana emergente.
+
+---
+
+### ¿Qué sigue apenas guardes el `README.md`?
+1. **Actualizar `01_Firmware_ESP32/nodo_garagoa.ino`:** Subir en GitHub y en Arduino IDE la versión corregida de `nodo_garagoa.ino` (la que lee las 3 clases de la IA y usa el filtro $W=5$), conectar el ESP32-S3 por USB y copiar el dato de **Latencia Promedio ($N = 100$)** que sale en el Monitor Serial a los 5 segundos.
+2. **Actualizar Overleaf (`main.tex`):** Pegar ese dato de latencia real y alinear los pines del ESP32-S3 (`GPIO 8, 9, 4, 2`) en tu artículo IEEE para dar por terminada toda la entrega.
