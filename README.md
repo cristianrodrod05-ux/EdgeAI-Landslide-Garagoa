@@ -19,7 +19,7 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
 - `03_Modelo_TinyML/`: TensorFlow/Keras training, stratified splitting (`70% / 15% / 15%`), and INT8 post-training quantization notebook (`Entrenamiento_Final.ipynb`).
 - `04_Datasets/`:
   - `dataset_ladera_v1.csv`: **500 laboratory-calibrated physical-synthetic geotechnical samples** generated across the empirical operating ranges characterized on the inclined MDF terrain prototype (soil moisture `28%–93%`, pitch angle `24°–43°`, and angular velocity) balanced across 3 risk classes (`0`: Stable, `1`: Preventive Saturation, `2`: Imminent Landslide).
-  - `historico_clima_garagoa.csv`: **181 real hourly meteorological records** extracted from Open-Meteo for Garagoa (Nov 17–24, 2026), including temperature, relative humidity, instantaneous precipitation, and 24-hour rolling accumulated rainfall.
+  - `historico_clima_garagoa.csv`: **184 real hourly meteorological records** extracted from Open-Meteo for Garagoa (Nov 17–24, 2026), including temperature, relative humidity, instantaneous precipitation, and 24-hour rolling accumulated rainfall.
 
 ## Hardware Pinout (ESP32-S3)
 | Component | Protocol / Signal | ESP32 Pin |
