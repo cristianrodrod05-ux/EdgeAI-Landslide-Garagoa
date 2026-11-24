@@ -15,7 +15,7 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
 * `03_Modelo_TinyML/`: TensorFlow/Keras training and INT8 post-training quantization notebook (`Entrenamiento_Final.ipynb`).
 * `04_Datasets/`: Proprietary labeled geotechnical datasets (`dataset_ladera_v1.csv`, `dataset_real_garagoa.csv`) and historical precipitation logs (`historico_clima_garagoa.csv`).
 
-## Hardware Pinout (ESP32)
+## Hardware Pinout (ESP32-S3)
 | Component | Protocol / Signal | ESP32 Pin |
 | :--- | :--- | :--- |
 | **MPU6050 (IMU)** | I2C (`SDA` / `SCL`) | `GPIO 21` / `GPIO 22` |
