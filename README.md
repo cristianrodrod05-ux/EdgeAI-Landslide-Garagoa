@@ -43,4 +43,3 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
    ```bash
    pip install requests pandas
    python 02_ETL_y_WebScraping/dashboard_garagoa.py
-   
