@@ -2,9 +2,12 @@
 
 Autonomous, low-cost embedded system designed to detect and classify imminent rainfall-induced landslides locally on an **ESP32-S3** microcontroller using **TinyML (TensorFlow Lite Micro)**, a custom **ETL** acquisition pipeline, and deterministic **Data Structures**.
 
+## Video Demonstration
+- **Prototype & Live Test Demo (Unlisted YouTube):** [Watch Demonstration Video](https://youtu.be/RI9mb59-UeE)
+
 ## Team Members (Universidad Santo Tomás - Tunja)
-- **Cristian Andrés Rodríguez R.** — ETL Pipeline, Contextual Web Scraping , TinyML Quantization & Neural Network Architecture 
-- **Diego Alejandro Rivera P.** — Embedded C++ Firmware, I2C Sensors , Circular Buffer &  Mechanical Physics Modeling
+- **Cristian Andrés Rodríguez R.** — ETL Pipeline, Contextual Web Scraping, TinyML Quantization & Neural Network Architecture
+- **Diego Alejandro Rivera P.** — Embedded C++ Firmware, I2C Sensors, Circular Buffer & Mechanical Physics Modeling
 - **Fabian Ricardo Fuya C.** — Physical Prototype & Validation Metrics
 - **Juan José Sabogal S.** — IEEE Paper
 
@@ -43,8 +46,3 @@ Autonomous, low-cost embedded system designed to detect and classify imminent ra
    ```bash
    pip install requests pandas
    python 02_ETL_y_WebScraping/dashboard_garagoa.py
-   ```
-2. **Flash ESP32-S3 Edge Node:**
-   - Install the `TensorFlowLite_ESP32` library and the **ESP32** board package in **Arduino IDE**.
-   - Open `01_Firmware_ESP32/nodo_garagoa.ino` (keeping `model.h` inside the same sketch folder).
-   - Select **ESP32S3 Dev Module** as the target board, connect the MPU6050, soil moisture sensor, and active buzzer according to the **Hardware Pinout** table above, upload the sketch, and open the Serial Monitor at `115200` baud to inspect real-time risk classification and the $N = 100$ latency benchmark.
